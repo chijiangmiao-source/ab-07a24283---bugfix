@@ -35,8 +35,8 @@ app/storage.py      审计编号持久化（JSON，原子写，线程安全）
 app/server.py       零第三方依赖的 HTTP 服务（标准库）
 app/healthcheck.py  容器健康检查脚本
 scripts/verify.py   Compose verify：构建检查 + 单元测试 + HTTP 冒烟
-tests/              38 个 unittest 用例
-examples/           合规与违规（永不放行闭环）两个示例
+tests/              44 个 unittest 用例
+examples/           合规、违规（永不放行闭环）与同命题双待命滞留违规三个示例
 Dockerfile          python:3.11-slim，零 pip 依赖，带 HEALTHCHECK
 docker-compose.yml  ltl 服务 + verify 验收服务
 ```
@@ -89,7 +89,7 @@ curl -s -X POST localhost:9090/checks -H 'Content-Type: application/json' \
 # 按编号读取
 curl -s localhost:9090/checks/CHK-000001
 
-# 验收（构建检查 + 38 单测 + HTTP 冒烟，围绕永不放行违规闭环），退出码报告
+# 验收（构建检查 + 44 单测 + HTTP 冒烟：永不放行闭环与同命题双待命滞留场景），退出码报告
 docker compose up --build verify
 # 自定义端口：
 LTL_PORT=8090 LTL_HOST_PORT=9090 docker compose up --build verify

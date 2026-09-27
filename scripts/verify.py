@@ -79,6 +79,28 @@ COMPLIANT = {
     "formula": "G(!request | F granted)",
 }
 
+# 两处同命题（request）待命位置：wait_safe 安全待命会进入放行位置，
+# wait_stuck 滞留待命从初态可达并可无限停留（t_stay 自闭环）。
+# 正确结论必须是 holds=false：idle -t_req_stuck-> wait_stuck -t_stay↺
+TWO_STANDBY = {
+    "locations": ["idle", "wait_safe", "wait_stuck", "grant"],
+    "initial": "idle",
+    "switches": [
+        {"id": "t_req_safe",  "source": "idle",       "target": "wait_safe"},
+        {"id": "t_req_stuck", "source": "idle",       "target": "wait_stuck"},
+        {"id": "t_stay",      "source": "wait_stuck", "target": "wait_stuck"},
+        {"id": "t_permit",    "source": "wait_safe",  "target": "grant"},
+        {"id": "t_clear",     "source": "grant",      "target": "idle"},
+    ],
+    "propositions": {
+        "idle":       [],
+        "wait_safe":  ["request"],
+        "wait_stuck": ["request"],
+        "grant":      ["request", "granted"],
+    },
+    "formula": "G(!request | F granted)",
+}
+
 
 def main():
     # 1. 构建检查
@@ -149,6 +171,63 @@ def main():
     check("每步含位置/切换/子式真值证据", evidence_ok)
     check("违规同样保存并可按编号读取",
           body.get("id") and http("GET", f"/checks/{body['id']}")[0] == 200)
+
+    # ---- 同命题双待命位置场景：滞留待命闭环必须被判违规 ----
+    section("HTTP 场景：同命题双待命（安全/滞留）")
+    from app.ltl_parser import parse_formula
+    declared = set()
+    for plist in TWO_STANDBY["propositions"].values():
+        declared.update(plist)
+    root_key = parse_formula(TWO_STANDBY["formula"], declared).to_str()
+
+    status, body = http("POST", "/checks", TWO_STANDBY)
+    v = body.get("violation") or {}
+    steps = v.get("steps", [])
+    m = v.get("loop_start_index")
+    prefix = steps[:m] if m is not None else []
+    loop = steps[m:] if m is not None else []
+    check("同命题双待命规程 POST 201 且 holds=false",
+          status == 201 and body.get("holds") is False and v,
+          f"status={status} holds={body.get('holds')}")
+    check("前缀自初态 idle 经 t_req_stuck 进入滞留待命 wait_stuck",
+          bool(prefix) and prefix[0].get("location") == "idle"
+          and prefix[-1].get("switch_taken") == "t_req_stuck"
+          and bool(loop) and loop[0].get("location") == "wait_stuck",
+          f"prefix={[s.get('location') for s in prefix]}")
+    check("闭环只含 wait_stuck 且反复执行其闭环切换 t_stay",
+          bool(loop)
+          and all(s.get("location") == "wait_stuck" for s in loop)
+          and {s.get("switch_taken") for s in loop} == {"t_stay"},
+          f"loop={[(s.get('location'), s.get('switch_taken')) for s in loop]}")
+    check("闭环逐步命题含 request 且从不出现 granted",
+          bool(loop) and all(
+              "request" in s.get("propositions", [])
+              and "granted" not in s.get("propositions", [])
+              for s in loop))
+    check("闭环上根公式与 Fgranted 逐步为假、request 为真（可复算违规）",
+          bool(loop) and all(
+              s.get("formula_true_here") is False
+              and s.get("subformula_truth", {}).get(root_key) is False
+              and s.get("subformula_truth", {}).get("Fgranted") is False
+              and s.get("subformula_truth", {}).get("request") is True
+              for s in loop))
+    check("违规证据可按编号读取",
+          body.get("id") and http("GET", f"/checks/{body['id']}")[0] == 200)
+
+    # 位置/切换录入顺序变化：结论与闭环位置不变
+    perm = json.loads(json.dumps(TWO_STANDBY))
+    perm["locations"] = list(reversed(perm["locations"]))
+    perm["switches"] = list(reversed(perm["switches"]))
+    status, body2 = http("POST", "/checks", perm)
+    v2 = body2.get("violation") or {}
+    steps2 = v2.get("steps", [])
+    m2 = v2.get("loop_start_index")
+    loop2 = steps2[m2:] if m2 is not None else []
+    check("录入顺序变化后结论仍为不成立且闭环仍在 wait_stuck",
+          status == 201 and body2.get("holds") is False
+          and bool(loop2)
+          and all(s.get("location") == "wait_stuck" for s in loop2),
+          f"status={status} holds={body2.get('holds')}")
 
     bad = json.loads(json.dumps(STARVATION))
     bad["switches"] = bad["switches"][:2]  # deny/grant 变死端

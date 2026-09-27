@@ -396,31 +396,19 @@ class Product:
     loc_labels: Dict[str, Set[str]]
 
 
-def _label_representatives(
-    locations: List[str], propositions: Dict[str, List[str]]
-) -> Dict[str, str]:
-    representatives: Dict[Tuple[str, ...], str] = {}
-    compact: Dict[str, str] = {}
-    for loc in locations:
-        signature = tuple(propositions[loc])
-        representative = representatives.get(signature)
-        if representative is None:
-            representatives[signature] = loc
-            representative = loc
-        compact[loc] = representative
-    return compact
-
-
 def build_product(
     gba: OnTheFlyGBA,
-    locations: List[str],
     initial_loc: str,
     outgoing: Dict[str, List[Dict[str, str]]],
     propositions: Dict[str, List[str]],
 ) -> Product:
+    """位置 × GBA 基本集的乘积，沿声明的切换按需展开。
+
+    乘积状态必须使用**真实位置**：命题集合相同的位置未必后继相同
+    （安全待命进入放行、滞留待命自我循环），按标签合并会丢掉实际
+    可达的切换，既会漏判真实违规，也会让结论随录入顺序漂移。
+    """
     labels = {loc: set(plist) for loc, plist in propositions.items()}
-    compact_location = _label_representatives(locations, propositions)
-    effective_initial = compact_location[initial_loc]
 
     states: List[PState] = []
     sid: Dict[PState, int] = {}
@@ -435,9 +423,9 @@ def build_product(
 
     queue: deque[int] = deque()
     root_aps: List[FrozenSet[int]] = []
-    for ap in gba.initial_states(labels[effective_initial]):
+    for ap in gba.initial_states(labels[initial_loc]):
         root_aps.append(ap)
-        queue.append(intern(PState(effective_initial, ap)))
+        queue.append(intern(PState(initial_loc, ap)))
     root_ap_set = set(root_aps)
 
     edges: List[List[Tuple[int, str]]] = []
@@ -451,7 +439,7 @@ def build_product(
         pad(u)
         ps = states[u]
         for sw in outgoing[ps.loc]:
-            dst = compact_location[sw["target"]]
+            dst = sw["target"]
             for ap2 in gba.successors(ps.ap, labels[dst]):
                 nxt = PState(dst, ap2)
                 existed = nxt in sid
@@ -472,7 +460,7 @@ def build_product(
         edges=edges,
         initial=[
             v for v, p in enumerate(states)
-            if p.loc == effective_initial and p.ap in root_ap_set
+            if p.loc == initial_loc and p.ap in root_ap_set
         ],
         fairness=fairness,
         loc_labels=labels,
@@ -774,7 +762,6 @@ def check(spec: Dict[str, Any]) -> CheckResult:
     gba = build_gba(neg_nnf)
     product = build_product(
         gba,
-        spec["locations"],
         spec["initial"],
         spec["outgoing"],
         spec["propositions"],

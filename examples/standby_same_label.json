@@ -1,0 +1,19 @@
+{
+  "_comment": "违规规程（同命题双待命）：wait_safe 安全待命会进入 grant 放行；wait_stuck 滞留待命与 wait_safe 命题集合相同（均为 request），但可从 idle 到达并经 t_stay 无限停留、永不放行。公式 G(!request | F granted) 必须判不成立，证据为 idle -> wait_stuck 前缀与 wait_stuck 上 t_stay 重复闭环",
+  "locations": ["idle", "wait_safe", "wait_stuck", "grant"],
+  "initial": "idle",
+  "switches": [
+    {"id": "t_req_safe",  "source": "idle",       "target": "wait_safe"},
+    {"id": "t_req_stuck", "source": "idle",       "target": "wait_stuck"},
+    {"id": "t_stay",      "source": "wait_stuck", "target": "wait_stuck"},
+    {"id": "t_permit",    "source": "wait_safe",  "target": "grant"},
+    {"id": "t_clear",     "source": "grant",      "target": "idle"}
+  ],
+  "propositions": {
+    "idle":       [],
+    "wait_safe":  ["request"],
+    "wait_stuck": ["request"],
+    "grant":      ["request", "granted"]
+  },
+  "formula": "G(!request | F granted)"
+}

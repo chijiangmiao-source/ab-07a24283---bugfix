@@ -79,6 +79,29 @@ COMPLIANT = {
     "formula": "G(!request | F granted)",
 }
 
+# 联锁规程：两处待命位置命题集合完全相同（均“已请求”），但后继不同——
+# safe 待命会进入放行位置 grant；stuck 待命可从初态直接进入并自环无限滞留。
+# “请求最终必须放行”必须判不成立，证据为 init->stuck 前缀 + stuck 自环闭环，
+# 闭环上不出现 granted；同标的 safe 不得改变这条实际可达执行的结论。
+TWIN_STANDBY = {
+    "locations": ["init", "safe", "stuck", "grant"],
+    "initial": "init",
+    "switches": [
+        {"id": "to_safe", "source": "init", "target": "safe"},
+        {"id": "to_stuck", "source": "init", "target": "stuck"},
+        {"id": "release", "source": "safe", "target": "grant"},
+        {"id": "back", "source": "grant", "target": "init"},
+        {"id": "hold", "source": "stuck", "target": "stuck"},
+    ],
+    "propositions": {
+        "init": [],
+        "safe": ["request"],
+        "stuck": ["request"],
+        "grant": ["granted"],
+    },
+    "formula": "G(!request | F granted)",
+}
+
 
 def main():
     # 1. 构建检查
@@ -148,6 +171,67 @@ def main():
     check("闭环上公式逐点为假（无限违规，非有限回放）", loop_false)
     check("每步含位置/切换/子式真值证据", evidence_ok)
     check("违规同样保存并可按编号读取",
+          body.get("id") and http("GET", f"/checks/{body['id']}")[0] == 200)
+
+    # 同标孪生待命：安全待命放行 vs. 可滞留待命（回归核心缺陷）
+    section("同标孪生待命 HTTP 场景")
+    status, body = http("POST", "/checks", TWIN_STANDBY)
+    check("孪生待命规程 POST /checks 201 且 holds=false",
+          status == 201 and body.get("holds") is False
+          and body.get("violation"),
+          f"status={status} body={body}")
+    tv = body.get("violation") or {}
+    tsteps = tv.get("steps", [])
+    tm = tv.get("loop_start_index")
+    if tm is not None and tsteps:
+        pre = tsteps[:tm]
+        cyc = tsteps[tm:]
+        edge = {(s["source"], s["id"]): s["target"]
+                for s in TWIN_STANDBY["switches"]}
+        rewalk_ok = True
+        rewalk_detail = ""
+        for i, st in enumerate(tsteps):
+            key = (st.get("location"), st.get("switch_taken"))
+            if key not in edge:
+                rewalk_ok, rewalk_detail = False, f"步骤 {i} 切换不存在"
+                break
+            nxt = (tsteps[i + 1]["location"] if i + 1 < len(tsteps)
+                   else tsteps[tm]["location"])
+            if edge[key] != nxt:
+                rewalk_ok, rewalk_detail = False, f"步骤 {i} 目的位置不符"
+                break
+        prefix_ok = (
+            pre and pre[0]["location"] == "init"
+            and any(s["switch_taken"] == "to_stuck" for s in pre)
+            and tsteps[tm]["location"] == "stuck"
+        )
+        cycle_ok = (
+            len(cyc) == tv.get("cycle_length")
+            and all(s["location"] == "stuck" for s in cyc)
+            and all(s["switch_taken"] == "hold" for s in cyc)
+        )
+        no_grant_on_cycle = all(
+            "granted" not in s.get("propositions", []) for s in cyc
+        )
+        root_key = "G((!request | Fgranted))"
+        stepwise_ok = all(
+            s.get("formula_true_here") is False
+            and isinstance(s.get("subformula_truth"), dict)
+            and s["subformula_truth"].get(root_key) is False
+            and s["subformula_truth"].get("Fgranted") is False
+            and s["subformula_truth"].get("(!request | Fgranted)") is False
+            and s["subformula_truth"].get("request") is True
+            for s in cyc
+        )
+    else:
+        prefix_ok = cycle_ok = no_grant_on_cycle = stepwise_ok = False
+        rewalk_ok, rewalk_detail = False, "缺少套索证据"
+    check("前缀从 init 经 to_stuck 进入滞留位置 stuck", prefix_ok)
+    check("闭环只在 stuck 上以 hold 自环重复", cycle_ok)
+    check("闭环上不出现放行命题 granted", no_grant_on_cycle)
+    check("闭环各步根公式与相关子式逐步为假（可复算为违规）", stepwise_ok)
+    check("套索每步切换真实存在且闭环闭合", rewalk_ok, rewalk_detail)
+    check("孪生违规可按编号读取",
           body.get("id") and http("GET", f"/checks/{body['id']}")[0] == 200)
 
     bad = json.loads(json.dumps(STARVATION))

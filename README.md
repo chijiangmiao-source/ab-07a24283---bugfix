@@ -15,6 +15,9 @@
    公式实测毫秒级）。
 3. **与规程乘积**：状态 = 位置 × GBA 基本集；沿调用方声明的有向切换迁移，
    标签须与自动机状态的字面量一致。`X` 后继约束与标签冲突时该迁移无后继。
+   **位置绝不按命题标签合并**：命题集合相同的两个位置可以有不同的外出切换
+   （如同标“已请求”的安全待命会放行，而另一处待命可从初态进入并无限滞留），
+   合并代表点会丢弃实际可达的违规执行。
 4. **可达接受环**：对可达乘积图跑 Tarjan SCC，存在被**全部**公平集无限次
    命中的非平凡 SCC 当且仅当存在 ¬φ 的无限执行（φ 被违反）；在 SCC 内拼出
    一条**前缀 + 重复闭环**的套索，并独立重放验证每一步切换真实存在且闭环闭合。
@@ -35,8 +38,8 @@ app/storage.py      审计编号持久化（JSON，原子写，线程安全）
 app/server.py       零第三方依赖的 HTTP 服务（标准库）
 app/healthcheck.py  容器健康检查脚本
 scripts/verify.py   Compose verify：构建检查 + 单元测试 + HTTP 冒烟
-tests/              38 个 unittest 用例
-examples/           合规与违规（永不放行闭环）两个示例
+tests/              49 个 unittest 用例
+examples/           合规、永不放行闭环、同标孪生待命三个示例
 Dockerfile          python:3.11-slim，零 pip 依赖，带 HEALTHCHECK
 docker-compose.yml  ltl 服务 + verify 验收服务
 ```
@@ -85,11 +88,15 @@ curl -s -X POST localhost:9090/checks -H 'Content-Type: application/json' \
   --data @examples/compliant.json
 curl -s -X POST localhost:9090/checks -H 'Content-Type: application/json' \
   --data @examples/violation.json
+# 同标孪生待命（两处待命命题集合相同但后继不同，必须判违规）
+curl -s -X POST localhost:9090/checks -H 'Content-Type: application/json' \
+  --data @examples/twin_standby.json
 
 # 按编号读取
 curl -s localhost:9090/checks/CHK-000001
 
-# 验收（构建检查 + 38 单测 + HTTP 冒烟，围绕永不放行违规闭环），退出码报告
+# 验收（构建检查 + 49 单测 + HTTP 冒烟，含永不放行与同标孪生待命违规闭环），
+# 退出码报告
 docker compose up --build verify
 # 自定义端口：
 LTL_PORT=8090 LTL_HOST_PORT=9090 docker compose up --build verify

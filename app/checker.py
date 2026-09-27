@@ -396,21 +396,6 @@ class Product:
     loc_labels: Dict[str, Set[str]]
 
 
-def _label_representatives(
-    locations: List[str], propositions: Dict[str, List[str]]
-) -> Dict[str, str]:
-    representatives: Dict[Tuple[str, ...], str] = {}
-    compact: Dict[str, str] = {}
-    for loc in locations:
-        signature = tuple(propositions[loc])
-        representative = representatives.get(signature)
-        if representative is None:
-            representatives[signature] = loc
-            representative = loc
-        compact[loc] = representative
-    return compact
-
-
 def build_product(
     gba: OnTheFlyGBA,
     locations: List[str],
@@ -418,9 +403,11 @@ def build_product(
     outgoing: Dict[str, List[Dict[str, str]]],
     propositions: Dict[str, List[str]],
 ) -> Product:
+    # 注意：绝不能按命题标签合并位置。命题集合相同的两个位置可以有不同的
+    # 外出切换（例如同标“已请求”的安全待命会走向放行，而另一处待命可从
+    # 初态进入并无限滞留）；合并代表点会丢弃仅在真实位置上可达的违规执行。
+    # 乘积状态必须保留具体位置名 (loc, 基本公式集)。
     labels = {loc: set(plist) for loc, plist in propositions.items()}
-    compact_location = _label_representatives(locations, propositions)
-    effective_initial = compact_location[initial_loc]
 
     states: List[PState] = []
     sid: Dict[PState, int] = {}
@@ -435,9 +422,9 @@ def build_product(
 
     queue: deque[int] = deque()
     root_aps: List[FrozenSet[int]] = []
-    for ap in gba.initial_states(labels[effective_initial]):
+    for ap in gba.initial_states(labels[initial_loc]):
         root_aps.append(ap)
-        queue.append(intern(PState(effective_initial, ap)))
+        queue.append(intern(PState(initial_loc, ap)))
     root_ap_set = set(root_aps)
 
     edges: List[List[Tuple[int, str]]] = []
@@ -451,7 +438,7 @@ def build_product(
         pad(u)
         ps = states[u]
         for sw in outgoing[ps.loc]:
-            dst = compact_location[sw["target"]]
+            dst = sw["target"]
             for ap2 in gba.successors(ps.ap, labels[dst]):
                 nxt = PState(dst, ap2)
                 existed = nxt in sid
@@ -472,7 +459,7 @@ def build_product(
         edges=edges,
         initial=[
             v for v, p in enumerate(states)
-            if p.loc == effective_initial and p.ap in root_ap_set
+            if p.loc == initial_loc and p.ap in root_ap_set
         ],
         fairness=fairness,
         loc_labels=labels,

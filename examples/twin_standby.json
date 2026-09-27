@@ -1,0 +1,19 @@
+{
+  "_comment": "违规规程（同标孪生待命回归）：safe 与 stuck 命题集合完全相同（均已请求），但后继不同——safe 会放行至 grant，stuck 可从 init 直接进入并自环无限滞留；G(!request | F granted) 必须判不成立，证据前缀 init->stuck、闭环 stuck 自环且不含 granted",
+  "locations": ["init", "safe", "stuck", "grant"],
+  "initial": "init",
+  "switches": [
+    {"id": "to_safe",  "source": "init",  "target": "safe"},
+    {"id": "to_stuck", "source": "init",  "target": "stuck"},
+    {"id": "release",  "source": "safe",  "target": "grant"},
+    {"id": "back",     "source": "grant", "target": "init"},
+    {"id": "hold",     "source": "stuck", "target": "stuck"}
+  ],
+  "propositions": {
+    "init":  [],
+    "safe":  ["request"],
+    "stuck": ["request"],
+    "grant": ["granted"]
+  },
+  "formula": "G(!request | F granted)"
+}
